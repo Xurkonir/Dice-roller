@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dice Roller — improved</title>
+<style>
+:root{
+  --bg:#121212; --panel:#1e1e1e; --muted:#8b8b8b; --accent:#4caf50; --accent-2:#ffd54f; --enemy:#f44336;
+  --text:#eee;
+}
+body{font-family:system-ui,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:12px;display:flex;justify-content:center;}
+.app{width:100%;max-width:720px;}
+.card{background:var(--panel);border-radius:12px;padding:12px;box-shadow:0 6px 24px rgba(0,0,0,.6);}
+.header{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:8px;}
+h1{font-size:1.1rem;margin:0;}
+button{background:#2b2b2b;color:var(--text);border:none;padding:8px 10px;border-radius:8px;cursor:pointer;}
+button:hover{filter:brightness(1.05);}
+.small{padding:6px 8px;font-size:.95rem;}
+
+.unit-list{margin-top:10px;display:flex;flex-direction:column;gap:8px;max-height:360px;overflow:auto;padding-right:6px;}
+.unit{display:flex;align-items:center;justify-content:space-between;padding:8px;border-radius:8px;border:2px solid transparent;background:rgba(0,0,0,0.06);cursor:grab;transition:background .2s,border .2s;}
+.unit.dragging{opacity:.6;border-style:dashed;}
+.unit.drag-target{background:rgba(255,255,255,0.05);border-color:var(--accent);}
+.unit.enemy{border-left:4px solid var(--enemy);}
+.unit.friend{border-left:4px solid var(--accent);}
+.unit.dead{opacity:.45;text-decoration:line-through;}
+.unit .left{display:flex;align-items:center;gap:10px;}
+.unit .name{font-weight:600;}
+.unit .lastroll{font-family:monospace;color:var(--muted);min-width:8ch;text-align:right;}
+.unit.active{outline:2px solid rgba(76,175,80,0.18);box-shadow:0 0 8px rgba(76,175,80,0.06);}
+.unit .right{display:flex;gap:8px;align-items:center;}
+.icon-btn{background:transparent;border:none;color:var(--muted);font-size:1rem;cursor:pointer;padding:4px;border-radius:6px;}
+.icon-btn:hover{color:var(--text);background:rgba(255,255,255,0.02);}
+
+/* result visual */
+.result-wrap{display:flex;flex-direction:column;align-items:center;margin-top:12px;gap:8px;}
+.result{display:flex;align-items:center;gap:10px;font-size:1.6rem;font-weight:700;padding:10px 14px;border-radius:10px;background:rgba(255,255,255,0.02);min-width:220px;justify-content:center;transition:box-shadow .8s, transform .25s;}
+.result.glow{box-shadow:0 0 30px 6px rgba(255,213,79,0.16);transform:translateY(-4px);}
+.die-icon{font-size:1.8rem;display:inline-block;transform-origin:center;transition:transform .32s ease;}
+
+/* controls layout */
+.roll-controls{display:flex;gap:8px;align-items:center;margin-top:8px;}
+.roll-controls .middle{display:flex;flex-direction:column;align-items:center;justify-content:center;}
+
+/* round reset button (new) */
+.round-reset{
+  width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-weight:bold;background:var(--accent-2);color:#000;cursor:pointer;border:none;
+}
+
+/* switches */
+.switch{position:relative;width:46px;height:26px;display:inline-block;margin-left:8px;}
+.switch input{opacity:0;width:0;height:0;}
+.slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#333;transition:.25s;border-radius:26px;}
+.slider:before{position:absolute;content:"";height:20px;width:20px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.25s;}
+.switch input:checked + .slider{background:var(--accent);}
+.switch input:checked + .slider:before{transform:translateX(20px);}
+
+/* meta */
+.meta{display:flex;gap:12px;align-items:center;margin-top:10px;color:var(--muted);font-size:.95rem;}
+.round-pill{background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:8px;font-weight:600;}
+
+body.light{--bg:#fafafa;--panel:#fff;--muted:#666;--accent:#2e7d32;--accent-2:#f4b400;--text:#111;}
+body.light .result{background:rgba(0,0,0,0.03);}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="card">
+    <div class="header">
+      <h1>🎲 Dice Roller & Turn Tracker</h1>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <div style="display:flex;flex-direction:column;align-items:flex-end;">
+          <label style="font-size:.85rem;color:var(--muted)">Geluid</label>
+          <label class="switch"><input id="soundToggle" type="checkbox" checked><span class="slider"></span></label>
+        </div>
+        <button id="themeToggle" class="small" title="Wissel thema">🌙</button>
+      </div>
+    </div>
+
+    <!-- add unit -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+      <input id="nameInput" type="text" placeholder="Naam unit..." style="flex:1;border-radius:8px;padding:8px;">
+      <button id="addUnit" class="small">➕</button>
+    </div>
+
+    <!-- unit list -->
+    <div class="unit-list" id="unitList"></div>
+
+    <!-- controls -->
+    <div class="controls">
+      <label for="diceType">D</label>
+      <select id="diceType">
+        <option>20</option><option>12</option><option>10</option><option>8</option><option>6</option><option>4</option>
+      </select>
+      <label for="diceCount">x</label>
+      <input id="diceCount" type="number" min="1" max="10" value="1" style="width:64px;">
+      <div class="roll-controls" style="margin-left:auto;">
+        <button id="rollBtn" class="small">Rol</button>
+        <div class="middle">
+          <button id="nextBtn" class="small">Volgende beurt</button>
+          <button id="resetRoundBtn" class="round-reset" title="Reset ronde">⟳</button>
+        </div>
+        <button id="rollLooseBtn" class="small">Losse rol</button>
+      </div>
+    </div>
+
+    <!-- result -->
+    <div class="result-wrap">
+      <div id="diceResult" class="result">—</div>
+      <div class="meta">
+        <div class="round-pill">Ronde: <span id="roundInfo">1</span></div>
+        <div id="stillToRoll" style="color:var(--accent-2);font-weight:600">Nog te rollen: 0</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let units=[],currentIndex=0,round=1,soundOn=true;
+const unitList=document.getElementById('unitList'),addUnitBtn=document.getElementById('addUnit'),
+nameInput=document.getElementById('nameInput'),rollBtn=document.getElementById('rollBtn'),
+rollLooseBtn=document.getElementById('rollLooseBtn'),nextBtn=document.getElementById('nextBtn'),
+resetRoundBtn=document.getElementById('resetRoundBtn'),
+diceType=document.getElementById('diceType'),diceCount=document.getElementById('diceCount'),
+diceResult=document.getElementById('diceResult'),roundInfo=document.getElementById('roundInfo'),
+stillToRoll=document.getElementById('stillToRoll'),soundToggle=document.getElementById('soundToggle'),
+themeToggle=document.getElementById('themeToggle');
+
+/* ====== audio (softer, longer tail) ====== */
+let audioCtx=null;
+function ensureAudioContext(){if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();}
+function playDiceSound(){
+  if(!soundOn)return;ensureAudioContext();
+  const ctx=audioCtx,now=ctx.currentTime;
+  const dur=0.4,osc=ctx.createOscillator(),gain=ctx.createGain();
+  osc.type='triangle';osc.frequency.setValueAtTime(300+Math.random()*200,now);
+  gain.gain.setValueAtTime(0,now);
+  gain.gain.linearRampToValueAtTime(0.5,now+0.01);
+  gain.gain.exponentialRampToValueAtTime(0.001,now+dur);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start(now);osc.stop(now+dur);
+}
+
+/* ====== core functions ====== */
+function saveState(){localStorage.setItem('diceToolState',JSON.stringify({units,currentIndex,round,soundOn,theme:document.body.classList.contains('light')}));}
+function loadState(){try{const s=JSON.parse(localStorage.getItem('diceToolState')||'{}');units=s.units||[];currentIndex=s.currentIndex||0;round=s.round||1;soundOn=s.soundOn!==false;if(s.theme)document.body.classList.add('light');soundToggle.checked=soundOn;}catch{}}
+
+function renderUnits(){
+  unitList.innerHTML='';
+  units.forEach((u,i)=>{
+    const div=document.createElement('div');
+    div.className=`unit ${(u.enemy?'enemy':'friend')} ${i===currentIndex?'active':''} ${u.dead?'dead':''}`;
+    div.draggable=true;div.dataset.index=i;
+    const left=document.createElement('div');left.className='left';
+    const name=document.createElement('span');name.className='name';name.textContent=u.name;
+    name.onclick=()=>{currentIndex=i;renderUnits();saveState();};
+    const last=document.createElement('div');last.className='lastroll';last.textContent=u.lastRoll||'';
+    left.append(name,last);
+    const right=document.createElement('div');right.className='right';
+    const typeBtn=document.createElement('button');typeBtn.className='icon-btn';typeBtn.textContent=u.enemy?'⚔️':'🛡️';
+    typeBtn.title='Wissel vijand/vriend';typeBtn.onclick=(e)=>{e.stopPropagation();u.enemy=!u.enemy;renderUnits();saveState();};
+    const deadBtn=document.createElement('button');deadBtn.className='icon-btn';deadBtn.textContent='💀';
+    deadBtn.onclick=(e)=>{e.stopPropagation();u.dead=!u.dead;renderUnits();updateStill();saveState();};
+    const del=document.createElement('button');del.className='icon-btn';del.textContent='🗑️';
+    del.onclick=(e)=>{e.stopPropagation();units.splice(i,1);if(currentIndex>=units.length)currentIndex=0;renderUnits();saveState();};
+    right.append(typeBtn,deadBtn,del);
+    div.append(left,right);
+
+    div.addEventListener('dragstart',e=>{div.classList.add('dragging');e.dataTransfer.setData('text/plain',i);});
+    div.addEventListener('dragend',()=>div.classList.remove('dragging'));
+    div.addEventListener('dragover',e=>{e.preventDefault();div.classList.add('drag-target');});
+    div.addEventListener('dragleave',()=>div.classList.remove('drag-target'));
+    div.addEventListener('drop',e=>{
+      e.preventDefault();div.classList.remove('drag-target');
+      const from=parseInt(e.dataTransfer.getData('text/plain'));const to=i;
+      if(from===to)return;const item=units.splice(from,1)[0];units.splice(to,0,item);
+      if(currentIndex===from)currentIndex=to;renderUnits();saveState();
+    });
+    unitList.append(div);
+  });
+  updateStill();
+}
+function rollDie(sides){return Math.floor(Math.random()*sides)+1;}
+function rollForActive(loose=false){
+  ensureAudioContext();playDiceSound();
+  const sides=parseInt(diceType.value),count=Math.max(1,Math.min(10,parseInt(diceCount.value)||1));
+  const rolls=Array.from({length:count},()=>rollDie(sides));
+  const total=rolls.reduce((a,b)=>a+b,0);
+  const icon='🎲';diceResult.innerHTML=`<span class="die-icon">${icon}</span> ${count}xD${sides}: ${rolls.join(', ')} (totaal ${total})`;
+  diceResult.classList.add('glow');setTimeout(()=>diceResult.classList.remove('glow'),800);
+  const act=units[currentIndex];if(!loose&&act){act.lastRoll=`${rolls.join(',')}`;act.rolledThisRound=true;}
+  checkRound();renderUnits();saveState();
+}
+function updateStill(){const left=units.filter(u=>!u.dead&&!u.rolledThisRound).length;stillToRoll.textContent=`Nog te rollen: ${left}`;}
+function checkRound(){
+  const alive=units.filter(u=>!u.dead);
+  if(alive.every(u=>u.rolledThisRound)){round++;alive.forEach(u=>u.rolledThisRound=false);}
+  roundInfo.textContent=round;
+}
+function advanceTurn(){if(units.length){currentIndex=(currentIndex+1)%units.length;renderUnits();saveState();}}
+
+/* ====== events ====== */
+addUnitBtn.onclick=()=>{const n=nameInput.value.trim();if(!n)return;units.push({name:n,lastRoll:null,rolledThisRound:false,dead:false,enemy:false});nameInput.value='';renderUnits();saveState();};
+rollBtn.onclick=()=>rollForActive(false);
+rollLooseBtn.onclick=()=>rollForActive(true);
+nextBtn.onclick=advanceTurn;
+resetRoundBtn.onclick=()=>{round=1;roundInfo.textContent=round;units.forEach(u=>u.rolledThisRound=false);saveState();};
+themeToggle.onclick=()=>{document.body.classList.toggle('light');saveState();};
+soundToggle.onchange=e=>{soundOn=e.target.checked;saveState();};
+nameInput.addEventListener('keypress',e=>{if(e.key==='Enter')addUnitBtn.click();});
+
+/* init */
+loadState();renderUnits();checkRound();
+</script>
+</body>
+</html>
